@@ -9,7 +9,7 @@ import (
 	"encoding/hex"
 
 	"github.com/asaskevich/govalidator"
-	"github.com/caddyserver/caddy/caddyfile"
+	"github.com/coredns/caddy/caddyfile"
 )
 
 type config struct {
