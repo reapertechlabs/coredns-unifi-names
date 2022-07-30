@@ -1,10 +1,13 @@
 # unifi-names
 
-*unifi-names* is an [coredns](https://github.com/coredns/coredns/) plugin, it resolves custom set names to the corresponding
+_unifi-names_ is an [coredns](https://github.com/coredns/coredns/) plugin, it resolves custom set names to the corresponding
 client ip.
 
+Modified to use the Unifi API Wrapper from [Unpoller](https://github.com/unpoller/unifi), SSL Verification is handled by the library
+and the previous method is not used, but will tigger the VerifySSL option.
 
 ## Syntax
+
 ```
 unifi-names {
     # map the Unifi network "LAN" to example1.com
@@ -23,12 +26,14 @@ unifi-names {
     #   username: username to use for login
     #   password: password to use for login
     #   ssl-certificate-fingerprint: an sha1 hash to verify the ssl certifacte with
-    #    (if skipped the normal verification process will be used, usefull for self signed certificates) 
+    #    (if skipped the normal verification process will be used, usefull for self signed certificates)
     # example:
     Unifi https://localhost:8443/ default admin secret1234 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00
     # standart ttl to use (this is also the refresh rate of getting the clients)
     TTL 3600
     # enable debug log output
     Debug
+    # enable SSL Verification (default is false)
+    VerifySSL
 }
 ```

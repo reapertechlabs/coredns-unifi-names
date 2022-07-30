@@ -1,30 +1,22 @@
 package unifinames
 
 import (
-	"bytes"
 	"context"
-	"crypto/tls"
-	"encoding/json"
-	"errors"
-	"fmt"
+
 	"log"
 	"net"
-	"net/http"
-	"net/http/cookiejar"
 	"regexp"
 
 	"strings"
 
 	"time"
 
-	"crypto/x509"
-
-	"crypto/sha1"
-
 	"sync"
 
 	"github.com/coredns/coredns/plugin"
+	"github.com/juju/errors"
 	"github.com/miekg/dns"
+	"github.com/unpoller/unifi"
 	"go.uber.org/atomic"
 )
 
@@ -139,130 +131,34 @@ func (p *unifinames) shouldHandle(name string) bool {
 var reSetCookieToken = regexp.MustCompile(`unifises=([0-9a-zA-Z]+)`)
 
 func (p *unifinames) getClients(ctx context.Context) error {
-	jar, err := cookiejar.New(nil)
+	var c unifi.Config
+
+	c = unifi.Config{
+		User:      p.Config.UnifiUsername,
+		Pass:      p.Config.UnifiPassword,
+		URL:       p.Config.UnifiControllerURL,
+		VerifySSL: p.Config.UnifiVerifySSL,
+	}
+
+	uni, err := unifi.NewUnifi(&c)
 	if err != nil {
-		return err
+		return errors.Annotate(err, "coredns-unifi-names: unable to create unifi client")
 	}
 
-	client := http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: len(p.Config.UnifiSSLFingerprint) > 0,
-				VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
-					if p.Config.UnifiSSLFingerprint == nil {
-						return errors.New("should never happen")
-					}
-					if len(rawCerts) == 0 {
-						return errors.New("no certificate present")
-					}
-					hash := sha1.Sum(rawCerts[0])
-					if !bytes.Equal(hash[:], p.Config.UnifiSSLFingerprint) {
-						return fmt.Errorf("ssl fingerprint mismatch: expected %x got %x", p.Config.UnifiSSLFingerprint, hash)
-					}
-					return nil
-				},
-			},
-		},
-		Jar:     jar,
-		Timeout: time.Minute,
-	}
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(map[string]string{
-		"username": p.Config.UnifiUsername,
-		"password": p.Config.UnifiPassword,
-	}); err != nil {
-		return fmt.Errorf("unable to encode payload: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.Config.UnifiControllerURL+"/api/login", &buf)
+	sites, err := uni.GetSites()
 	if err != nil {
-		return fmt.Errorf("unable to create login request: %w", err)
+		return errors.Annotate(err, "coredns-unifi-names: unable to get sites")
 	}
 
-	req.Header.Set("Referer", p.Config.UnifiControllerURL+"/login")
-
-	res, err := client.Do(req)
+	clients, err := uni.GetClients(sites)
 	if err != nil {
-		return fmt.Errorf("unable to perform login request: %w", err)
-	}
-
-	if res.Body != nil {
-		if err = res.Body.Close(); err != nil {
-			return fmt.Errorf("unable to close login body: %w", err)
-		}
-	}
-
-	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("login failed: expected status 200 got %d", res.StatusCode)
-	}
-
-	matches := reSetCookieToken.FindStringSubmatch(res.Header.Get("Set-Cookie"))
-	if len(matches) != 2 {
-		return fmt.Errorf("login failed: invalid or no cookie")
-	}
-
-	// get clients
-
-	req, err = http.NewRequestWithContext(ctx, http.MethodPost, p.Config.UnifiControllerURL+"/api/s/"+p.Config.UnifiSite+"/stat/sta", nil)
-	if err != nil {
-		return fmt.Errorf("unable to create list clients request: %w", err)
-	}
-
-	res, err = client.Do(req)
-	if err != nil {
-		return fmt.Errorf("unable to perform list clients request: %w", err)
-	}
-
-	if res.StatusCode != http.StatusOK {
-		if err = res.Body.Close(); err != nil {
-			return fmt.Errorf("unable to close logout body: %w", err)
-		}
-		return fmt.Errorf("unable to list clients: expected status 200 got %d", res.StatusCode)
-	}
-
-	var data struct {
-		Data []struct {
-			Name    string
-			Network string
-			IP      string
-		}
-	}
-
-	if err = json.NewDecoder(res.Body).Decode(&data); err != nil {
-		return fmt.Errorf("unable to decode list clients: %w", err)
-	}
-
-	if res.Body != nil {
-		if err = res.Body.Close(); err != nil {
-			return fmt.Errorf("unable to close logout body: %w", err)
-		}
-	}
-
-	req, err = http.NewRequestWithContext(ctx, http.MethodPost, p.Config.UnifiControllerURL+"/logout", nil)
-	if err != nil {
-		return fmt.Errorf("unable to create logout request: %w", err)
-	}
-
-	res, err = client.Do(req)
-	if err != nil {
-		return fmt.Errorf("unable to perform logout request: %w", err)
-	}
-
-	if res.Body != nil {
-		if err = res.Body.Close(); err != nil {
-			return fmt.Errorf("unable to close logout body: %w", err)
-		}
-	}
-
-	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("unable to logout: expected status 200 got %d", res.StatusCode)
+		return errors.Annotate(err, "coredns-unifi-names: unable to get clients")
 	}
 
 	p.aClients = nil
 	p.aaaaClients = nil
 
-	for _, entry := range data.Data {
+	for _, entry := range clients {
 		entry.Name = sanitizeName(entry.Name)
 		if entry.Name == "" {
 			continue
@@ -301,6 +197,7 @@ func (p *unifinames) getClients(ctx context.Context) error {
 	}
 
 	return nil
+
 }
 
 func isAllowedRune(allowedRunes []rune, r rune) bool {

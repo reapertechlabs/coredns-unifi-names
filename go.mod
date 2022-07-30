@@ -6,8 +6,10 @@ require (
 	github.com/asaskevich/govalidator v0.0.0-20210307081110-f21760c49a8d
 	github.com/coredns/caddy v1.1.1
 	github.com/coredns/coredns v1.9.3
+	github.com/juju/errors v1.0.0
 	github.com/miekg/dns v1.1.50
 	github.com/stretchr/testify v1.8.0
+	github.com/unpoller/unifi v0.0.9
 	go.uber.org/atomic v1.9.0
 )
 
