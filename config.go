@@ -35,13 +35,16 @@ type config struct {
 	UnifiSSLFingerprint []byte
 	// VerifySSL is whether to verify the ssl certificate
 	UnifiVerifySSL bool
+	// UseNameAsHostname is whether to use the name as the hostname
+	UseNameAsHostname bool
 }
 
 func newConfigFromDispenser(c caddyfile.Dispenser) (*config, error) {
 	config := config{
-		TTL:            60 * 60,
-		Networks:       map[string]string{},
-		UnifiVerifySSL: false,
+		TTL:               60 * 60,
+		Networks:          map[string]string{},
+		UnifiVerifySSL:    false,
+		UseNameAsHostname: false,
 	}
 
 	for c.NextBlock() {
@@ -67,6 +70,8 @@ func newConfigFromDispenser(c caddyfile.Dispenser) (*config, error) {
 			}
 		} else if strings.EqualFold(c.Val(), "debug") {
 			config.Debug = true
+		} else if strings.EqualFold(c.Val(), "use_name_as_hostname") {
+			config.UseNameAsHostname = true
 		} else if strings.EqualFold(c.Val(), "verifyssl") {
 			config.UnifiVerifySSL = true
 		} else if strings.EqualFold(c.Val(), "unifi") {
@@ -97,7 +102,7 @@ func newConfigFromDispenser(c caddyfile.Dispenser) (*config, error) {
 		log.Printf("[unifi-names] Parsed %d Networks\n", len(config.Networks))
 		log.Printf("[unifi-names] TTL is %d", config.TTL)
 		log.Printf("[unifi-names] Controller URL is `%s'", config.UnifiControllerURL)
-		log.Printf("[unifi-names] VerifySSL is `%s'", config.UnifiVerifySSL)
+		log.Printf("[unifi-names] VerifySSL is `%s'", map[bool]string{true: "On", false: "Off"}[config.UnifiVerifySSL])
 		// log.Printf("[unifi-names] Controller SSL fingerprint is `%x'", config.UnifiSSLFingerprint)
 	}
 	if len(config.Networks) <= 0 {

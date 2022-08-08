@@ -13,6 +13,7 @@ import (
 
 	"sync"
 
+	dns_val "github.com/THREATINT/go-net"
 	"github.com/coredns/coredns/plugin"
 	"github.com/juju/errors"
 	"github.com/miekg/dns"
@@ -26,6 +27,7 @@ type unifinames struct {
 	aClients    []dns.A
 	aaaaClients []dns.AAAA
 	lastUpdate  time.Time
+	IsReady     bool
 	mu          sync.Mutex
 	haveRoutine atomic.Bool
 }
@@ -56,9 +58,12 @@ func (p *unifinames) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.
 			}
 		}()
 	}
+
+	UnifinamesCount.Inc()
 	if p.resolve(w, r) {
 		return dns.RcodeSuccess, nil
 	}
+
 	return plugin.NextOrFailure(p.Name(), p.Next, ctx, w, r)
 }
 
@@ -159,10 +164,28 @@ func (p *unifinames) getClients(ctx context.Context) error {
 	p.aaaaClients = nil
 
 	for _, entry := range clients {
-		entry.Name = sanitizeName(entry.Name)
-		if entry.Name == "" {
+		dns_name := ""
+
+		if p.Config.UseNameAsHostname {
+			dns_name = strings.ToLower(sanitizeName(entry.Name))
+			if entry.Name == "" {
+				continue
+			}
+		} else {
+			dns_name = strings.ToLower(sanitizeName(entry.Hostname))
+			if entry.Hostname == "" {
+				continue
+			}
+		}
+
+		if dns_name == "" {
 			continue
 		}
+
+		if dns_val.IsFQDN(dns_name) {
+			continue
+		}
+
 		ip := net.ParseIP(entry.IP)
 		if ip == nil {
 			continue
@@ -173,8 +196,12 @@ func (p *unifinames) getClients(ctx context.Context) error {
 			continue
 		}
 
+		if p.Config.Debug {
+			log.Printf("[unifi-names] adding %s %s\n", entry.Name+"."+domain, entry.IP)
+		}
+
 		hdr := dns.RR_Header{
-			Name:     entry.Name + "." + domain,
+			Name:     dns_name + "." + domain,
 			Rrtype:   0,
 			Class:    dns.ClassINET,
 			Ttl:      0,
@@ -196,6 +223,7 @@ func (p *unifinames) getClients(ctx context.Context) error {
 		}
 	}
 
+	UnifinamesHostsCount.Set(float64(len(p.aClients) + len(p.aaaaClients)))
 	return nil
 
 }
@@ -231,4 +259,23 @@ func sanitizeName(s string) string {
 	return strings.Join(strings.FieldsFunc(sb.String(), func(r rune) bool {
 		return r == '-'
 	}), "-")
+}
+
+func (p *unifinames) Ready() bool {
+	if p.IsReady == false {
+		p.mu.Lock()
+		if p.Config.Debug {
+			log.Println("[unifi-names] updating clients")
+		}
+		if err := p.getClients(context.Background()); err != nil {
+			log.Printf("[unifi-names] unable to get clients: %v\n", err)
+			p.IsReady = true
+		}
+		p.mu.Unlock()
+		log.Printf("[unifi-names] got %d hosts", len(p.aClients)+len(p.aaaaClients))
+		p.lastUpdate = time.Now()
+		p.IsReady = true
+	}
+
+	return p.IsReady
 }
